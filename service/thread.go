@@ -37,13 +37,26 @@ type SpannerStoreConfig struct {
 	DatabaseRole          string
 	ThreadsTable          string
 	UserThreadStatesTable string
+}
 
-	// TitleModel is the Gemini model used to generate thread display names.
-	// Defaults to "gemini-2.5-flash-lite" if empty.
-	TitleModel string
-	// TitleLocation is the Vertex AI location for the Gemini client.
-	// Defaults to "global" if empty.
-	TitleLocation string
+// Option configures optional [ThreadService] settings applied in [NewThreadService].
+type Option func(*options)
+
+type options struct {
+	titleModel    string
+	titleLocation string
+}
+
+// WithTitleModel sets the Gemini model used to generate thread display names.
+// Defaults to "gemini-2.5-flash-lite".
+func WithTitleModel(model string) Option {
+	return func(o *options) { o.titleModel = model }
+}
+
+// WithTitleLocation sets the Vertex AI location for the Gemini client.
+// Defaults to "global".
+func WithTitleLocation(location string) Option {
+	return func(o *options) { o.titleLocation = location }
 }
 
 // ThreadService is an implementation for managing AG-UI thread metadata via Google Cloud Spanner.
@@ -58,7 +71,7 @@ type ThreadService struct {
 }
 
 // NewThreadService constructs a [ThreadService] with a Spanner client and IAM authorizer.
-func NewThreadService(ctx context.Context, config *SpannerStoreConfig) (*ThreadService, error) {
+func NewThreadService(ctx context.Context, config *SpannerStoreConfig, opts ...Option) (*ThreadService, error) {
 	dbName := fmt.Sprintf("projects/%s/instances/%s/databases/%s", config.Project, config.Instance, config.Database)
 
 	db, err := spanner.NewClientWithConfig(ctx, dbName, spanner.ClientConfig{
@@ -99,13 +112,12 @@ func NewThreadService(ctx context.Context, config *SpannerStoreConfig) (*ThreadS
 		return nil, err
 	}
 
-	titleModel := config.TitleModel
-	if titleModel == "" {
-		titleModel = defaultTitleModel
+	o := &options{
+		titleModel:    defaultTitleModel,
+		titleLocation: defaultTitleLocation,
 	}
-	titleLocation := config.TitleLocation
-	if titleLocation == "" {
-		titleLocation = defaultTitleLocation
+	for _, opt := range opts {
+		opt(o)
 	}
 
 	var geminiClient *genai.Client
@@ -117,7 +129,7 @@ func NewThreadService(ctx context.Context, config *SpannerStoreConfig) (*ThreadS
 		geminiClient, err = genai.NewClient(ctx, &genai.ClientConfig{
 			Backend:  genai.BackendVertexAI,
 			Project:  projectID,
-			Location: titleLocation,
+			Location: o.titleLocation,
 		})
 		if err != nil {
 			return nil, err
@@ -129,7 +141,7 @@ func NewThreadService(ctx context.Context, config *SpannerStoreConfig) (*ThreadS
 		threadsTbl:    config.ThreadsTable,
 		userStatesTbl: config.UserThreadStatesTable,
 		geminiClient:  geminiClient,
-		titleModel:    titleModel,
+		titleModel:    o.titleModel,
 		authorizer:    authorizer,
 	}, nil
 }

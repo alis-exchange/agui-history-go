@@ -105,9 +105,10 @@ Thread display names are generated via Gemini on first creation. Configure the m
 ```go
 threadService, err := service.NewThreadService(ctx, &service.SpannerStoreConfig{
     // ... Spanner config ...
-    TitleModel:    "gemini-2.5-flash-lite", // default
-    TitleLocation: "global",               // default
-})
+},
+    service.WithTitleModel("gemini-2.5-flash-lite"),   // default
+    service.WithTitleLocation("global"),               // default
+)
 ```
 
 ## Storage
