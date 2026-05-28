@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	cloud.google.com/go/iam v1.11.0
 	cloud.google.com/go/spanner v1.91.0
+	go.alis.build/alog v0.0.19
 	go.alis.build/common v1.1.5
 	go.alis.build/iam/v2 v2.5.0
 	go.alis.build/validation v1.0.7
@@ -39,7 +40,6 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
-	go.alis.build/alog v0.0.19 // indirect
 	go.alis.build/iam/v3 v3.2.5 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

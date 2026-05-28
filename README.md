@@ -11,6 +11,7 @@ This library stores **thread-level metadata only** (display names, agent identit
 | Package | Role |
 | --- | --- |
 | [`go.alis.build/agui/history/service`](service/) | [`ThreadService`](service/thread.go) — Spanner + IAM implementation for thread metadata and per-user state. |
+| [`go.alis.build/agui/history/jsonrpc`](jsonrpc/) | [`NewJSONRPCHandler`](jsonrpc/jsonrpc.go) — JSON-RPC 2.0 HTTP handler for thread operations (list, get, delete, mark-read, pin). |
 
 ## Features
 
@@ -18,6 +19,7 @@ This library stores **thread-level metadata only** (display names, agent identit
 - **Per-user state:** Unread tracking (`run_count` / `read_run_count`), pinning, read timestamps.
 - **IAM authorization:** Per-thread IAM policies control access (viewer, admin roles).
 - **AG-UI launcher integration:** Wire into the AG-UI launcher via `WithThreadService` so threads are created automatically on each `/run_sse` request.
+- **JSON-RPC 2.0 API:** HTTP handler for thread operations (list, get, delete, mark-read, pin) with CORS support.
 
 ## Installation
 
@@ -72,6 +74,30 @@ This enables:
 - `GET /agui/threads` — lists threads with unread/pinned state for the authenticated user
 - Automatic thread creation/update on each `/run_sse` request
 
+### JSON-RPC handler (optional)
+
+Expose thread operations over HTTP with JSON-RPC 2.0:
+
+```go
+import "go.alis.build/agui/history/jsonrpc"
+
+mux.Handle(jsonrpc.JSONRPCPath, jsonrpc.NewJSONRPCHandler(threadService))
+```
+
+With a method-aware mux (Go 1.22+):
+
+```go
+jsonrpc.Register(mux, threadService)
+```
+
+For browser clients, enable CORS:
+
+```go
+jsonrpc.Register(mux, threadService, jsonrpc.WithCORS())
+```
+
+Supported methods: `ListThreads`, `GetThread`, `DeleteThread`, `GetUserThreadState`, `UpdateUserThreadState`.
+
 ### Display name configuration
 
 Thread display names are generated via Gemini on first creation. Configure the model and location:
@@ -120,15 +146,17 @@ flowchart LR
   INT -->|"CreateOrUpdateThread"| S
   subgraph api [HTTP + gRPC]
     GET["GET /agui/threads"]
+    JSONRPC["JSON-RPC handler"]
     GRPC["gRPC ThreadService"]
     GET -->|"ListThreads"| S
+    JSONRPC -->|"ListThreads\nUpdateUserThreadState\nDeleteThread"| S
     GRPC -->|"UpdateUserThreadState\nDeleteThread"| S
   end
 ```
 
 1. **Write path:** The launcher's built-in interceptor calls `CreateOrUpdateThread` on each `/run_sse` request — creating the thread on first run (with Gemini-generated display name) and incrementing `run_count` on subsequent runs.
 2. **Read path:** `GET /agui/threads` calls `ListThreads`, which returns caller-scoped `ThreadView` projections joining `Thread` rows with per-user `UserThreadState` rows to compute `has_unread`.
-3. **Mutations:** Mark-read, pin, and delete operations go through the gRPC `ThreadService`.
+3. **Mutations:** Mark-read, pin, and delete operations go through the gRPC `ThreadService` or the JSON-RPC handler.
 
 ## Documentation
 
