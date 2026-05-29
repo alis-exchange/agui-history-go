@@ -17,7 +17,7 @@ This library stores **thread-level metadata only** (display names, agent identit
 
 - **Thread metadata management:** Display names (auto-generated via Gemini), agent identity, run counts, activity timestamps.
 - **Per-user state:** Unread tracking (`run_count` / `read_run_count`), pinning, read timestamps.
-- **IAM authorization:** Per-thread IAM policies control access (viewer, admin roles).
+- **IAM authorization:** Per-thread IAM policies control access (viewer, owner roles).
 - **AG-UI launcher integration:** Wire into the AG-UI launcher via `WithThreadService` so threads are created automatically on each `/run_sse` request.
 - **JSON-RPC 2.0 API:** HTTP handler for thread operations (list, get, delete, mark-read, pin) with CORS support.
 
@@ -45,10 +45,17 @@ threadService, err := service.NewThreadService(ctx, &service.SpannerStoreConfig{
 })
 ```
 
-Register on a gRPC server for mutations (mark-read, pin, delete):
+Register on a gRPC server for mutations (mark-read, pin, delete). Install
+`go.alis.build/iam/v3` interceptors so caller identity is available to
+`ThreadService`:
 
 ```go
-grpcServer := grpc.NewServer()
+import auth "go.alis.build/iam/v3"
+
+grpcServer := grpc.NewServer(
+    grpc.UnaryInterceptor(auth.UnaryInterceptor),
+    grpc.StreamInterceptor(auth.StreamInterceptor),
+)
 threadService.Register(grpcServer)
 ```
 
@@ -113,22 +120,57 @@ threadService, err := service.NewThreadService(ctx, &service.SpannerStoreConfig{
 
 ## Storage
 
-Two Spanner tables:
+Two Spanner tables (names are configurable via `SpannerStoreConfig`):
 
 | Table | Key | Contents |
 | --- | --- | --- |
-| Threads | `threads/{thread_id}` | Thread proto + IAM Policy |
+| Threads | `threads/{thread_id}` | Thread proto + IAM Policy proto |
 | UserThreadStates | `threads/{thread_id}/userStates/{user_id}` | UserThreadState proto |
 
 ### IAM Roles
 
-| Role | Permissions |
-| --- | --- |
-| `roles/open` | ListThreads, GetUserThreadState, UpdateUserThreadState |
-| `roles/thread.viewer` | GetThread |
-| `roles/thread.admin` | GetThread, DeleteThread |
+Each thread carries its own IAM policy. Roles are defined in the
+[`service/roles`](service/roles/) package:
 
-On thread creation, the caller is granted `roles/thread.admin`.
+| Role | Permissions | Granted to |
+| --- | --- | --- |
+| `roles/open` | ListThreads | All authenticated callers (open role) |
+| `roles/thread.viewer` | GetThread, GetUserThreadState, UpdateUserThreadState | Users bound in the thread's IAM policy |
+| `roles/thread.owner` | All viewer permissions + DeleteThread | Thread creator (auto-granted on first run) |
+
+On thread creation the caller is automatically granted `roles/thread.owner`.
+
+### Authorization
+
+`ListThreads` applies two layers of access control:
+
+1. **SQL member prefilter** — Spanner only returns rows where the caller
+   appears in at least one policy binding (matching `user:`, `email:`,
+   `domain:`, and `group:` member formats). Privileged identities
+   (system/admin) bypass the filter and see all threads.
+2. **Per-row check** — each returned row is verified with
+   `HasPermission(GetThread, policy)` as defense-in-depth.
+
+All other RPCs (GetThread, DeleteThread, etc.) read the thread's IAM policy
+and check the caller's permission directly.
+
+### Pagination
+
+`ListThreads` uses **cursor-based pagination** keyed on
+`(last_activity_time DESC, thread_name DESC)`. Page tokens are opaque strings;
+pass them as `page_token` in subsequent requests. The first request should
+omit `page_token` (or pass an empty string).
+
+### Identity propagation
+
+`ThreadService` requires a caller identity in the request context. There are
+three supported propagation paths:
+
+| Transport | How identity arrives |
+| --- | --- |
+| gRPC | `iam/v3` interceptors (`UnaryInterceptor`, `StreamInterceptor`) extract the identity from request metadata. |
+| JSON-RPC (HTTP) | `NewJSONRPCHandler` calls `iam.FromHeader` to parse the `x-alis-identity` header and stores it in the context. |
+| In-process | The AG-UI launcher injects the identity via `iam.Identity.Context(ctx)` or `x-alis-identity` gRPC metadata. |
 
 ## Architecture
 

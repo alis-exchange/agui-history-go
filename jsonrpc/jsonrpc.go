@@ -9,6 +9,7 @@ import (
 
 	"go.alis.build/alog"
 	pb "go.alis.build/common/alis/agui/history/v1"
+	auth "go.alis.build/iam/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -72,8 +73,14 @@ func (s *jsonrpcStream) SetTrailer(_ metadata.MD) error  { return nil }
 type JSONRPCHandlerOption func(*jsonrpcHandler)
 
 // NewJSONRPCHandler returns an [http.Handler] that implements JSON-RPC 2.0 for
-// the AG-UI thread history API. Request params and response results use protojson.
-// gRPC status errors from the service are mapped to JSON-RPC errors.
+// the AG-UI thread history API. Request params and response results use
+// protojson (camelCase). gRPC status errors from the service are mapped to
+// JSON-RPC error codes.
+//
+// The handler extracts the caller identity from the x-alis-identity HTTP
+// header via [iam.FromHeader] and propagates it to the [service.ThreadService]
+// through the request context. All HTTP headers are also forwarded as gRPC
+// incoming metadata for compatibility with in-process callers.
 func NewJSONRPCHandler(service pb.ThreadServiceServer, opts ...JSONRPCHandlerOption) http.Handler {
 	h := &jsonrpcHandler{service: service}
 	for _, o := range opts {
@@ -90,6 +97,9 @@ func (h *jsonrpcHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		md[strings.ToLower(k)] = vs
 	}
 	ctx = metadata.NewIncomingContext(ctx, md)
+	if identity, err := auth.FromHeader(req); err == nil {
+		ctx = identity.Context(ctx)
+	}
 
 	if h.cors != nil {
 		h.cors.writeHeaders(rw)
