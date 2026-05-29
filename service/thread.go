@@ -249,7 +249,7 @@ func (s *ThreadService) ListThreads(ctx context.Context, req *pb.ListThreadsRequ
 		}
 		statement.Params["agentId"] = req.GetAgentId()
 	}
-	statement.SQL += ` order by t.Thread.last_activity_time DESC limit @limit offset @offset;`
+	statement.SQL += ` order by TIMESTAMP_ADD(TIMESTAMP_SECONDS(t.Thread.last_activity_time.seconds),INTERVAL CAST(FLOOR(IFNULL(t.Thread.last_activity_time.nanos,0) / 1000) AS INT64) MICROSECOND) DESC limit @limit offset @offset;`
 
 	limit := int(req.GetPageSize())
 	if limit < 1 || limit > 100 {
